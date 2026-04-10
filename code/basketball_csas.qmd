@@ -1,0 +1,590 @@
+---
+title: "NBA Shot Analysis & Visualization"
+author: "Ankith Nagabandi"
+format:
+  revealjs:
+    theme: dark
+    transition: slide
+    slide-number: true
+    chalkboard: false
+    self-contained: true
+    code-fold: true
+    scrollable: true
+    footer: "NBA Shot Analysis · Ankith Nagabandi"
+    logo: ""
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+## About Me
+
+### Ankith Nagabandi
+- Passionate about Basketball Analytics.
+- Developing interactive dashboards and visualizations for shot analysis.
+- Exploring data-driven insights in NBA statistics.
+
+## Presentation Goals & Expectations
+
+### Goals
+- Analyze NBA shot performance across different zones and players.
+- Visualize shooting trends and efficiency.
+- Provide actionable insights for coaches and analysts.
+
+### What to Expect
+- Data preprocessing and cleaning techniques.
+- Interactive visualizations of shot locations and efficiency metrics.
+- Summary of key findings and potential future work.
+
+```{python}
+#| include: false
+import pandas as pd
+from collections import defaultdict
+from pathlib import Path
+
+# Try multiple likely locations for the CSV and provide a helpful error if not found
+candidates = [
+    Path('/Users/ankithnagabandi/Documents/Fall25/5520/New_Project/Project/nba_data.csv'),
+
+]
+
+data_path = None
+for p in candidates:
+    if p.exists():
+        data_path = p
+        break
+
+# If still not found, try to locate anywhere under the current working directory
+if data_path is None:
+    matches = list(Path.cwd().rglob('nba_data.csv'))
+    if matches:
+        data_path = matches[0]
+
+if data_path is None:
+    raise FileNotFoundError(
+        "nba_data.csv not found. Checked candidates: "
+        + ", ".join(str(p) for p in candidates)
+        + f". Current working directory: {Path.cwd()}. "
+        "Place the CSV at one of the checked locations or update the path."
+    )
+
+# Load the data
+df = pd.read_csv(data_path)
+
+# Helper to decide point value from shot-type text or distance
+def _determine_point_value_from_type_or_distance(row):
+    st = ''
+    for col in ('SHOT_TYPE','SHOT_TYPE_DESC','SHOT_ZONE_BASIC','DESCRIPTION'):
+        if col in row.index and pd.notna(row[col]):
+            st = str(row[col])
+            break
+    stl = st.lower()
+    if '3pt' in stl or '3-pt' in stl or '3 point' in stl or '3pt field' in stl:
+        return 3
+    if 'free' in stl or 'ft' in stl:
+        return 1
+    # fallback to shot distance heuristic
+    if 'SHOT_DISTANCE' in row.index and pd.notna(row['SHOT_DISTANCE']):
+        try:
+            d = float(row['SHOT_DISTANCE'])
+            return 3 if d >= 23 else 2
+        except Exception:
+            pass
+    return 2
+
+# Unified computation: returns (made_flag:int 0/1, points:int)
+def _compute_made_and_points(row):
+    # 1) Look for numeric flags that may encode points directly (e.g., 3,2,1)
+    for col in ('SHOT_MADE_FLAG','SHOT_MADE','MADE','made','shot_made_flag'):
+        if col in row.index and pd.notna(row[col]):
+            # try numeric
+            try:
+                v = float(row[col])
+                if v.is_integer():
+                    vi = int(v)
+                    if vi == 0:
+                        return 0, 0
+                    if vi in (2, 3):
+                        # flag stores point value directly
+                        return 1, vi
+                    if vi == 1:
+                        # ambiguous: treat as made, but determine actual point value from type/distance
+                        pts = _determine_point_value_from_type_or_distance(row)
+                        return 1, pts
+            except Exception:
+                pass
+            # if not numeric, examine textual value
+            s = str(row[col]).strip().lower()
+            if s in ('made','made 2','made 3'):
+                pts = _determine_point_value_from_type_or_distance(row)
+                return 1, pts
+            if s in ('miss','missed','0','false','f'):
+                return 0, 0
+    # 2) Check textual result fields
+    for col in ('SHOT_RESULT','shotResult','shot_result','RESULT','DESCRIPTION'):
+        if col in row.index and pd.notna(row[col]):
+            s = str(row[col]).strip().lower()
+            if 'made' in s:
+                pts = _determine_point_value_from_type_or_distance(row)
+                return 1, pts
+            if 'miss' in s or 'missed' in s:
+                return 0, 0
+    # 3) EVENTMSGTYPE fallback (1 == made)
+    if 'EVENTMSGTYPE' in row.index and pd.notna(row['EVENTMSGTYPE']):
+        try:
+            return (1, _determine_point_value_from_type_or_distance(row)) if int(row['EVENTMSGTYPE']) == 1 else (0, 0)
+        except Exception:
+            pass
+    # Default: not made
+    return 0, 0
+
+# Apply the unified logic to produce MADE_FLAG (0/1) and POINTS
+made_points = df.apply(_compute_made_and_points, axis=1)
+# made_points is a Series of tuples; convert to columns
+df['MADE_FLAG'] = [mp[0] for mp in made_points]
+# If any row already has a numeric POINTS value that looks correct (>0), prefer it; otherwise use computed
+computed_points = [mp[1] for mp in made_points]
+if 'POINTS' in df.columns:
+    # try to coerce existing points to numeric; replace zeros with computed where appropriate
+    existing = pd.to_numeric(df['POINTS'], errors='coerce').fillna(0).astype(int)
+    df['POINTS'] = [e if e > 0 else c for e, c in zip(existing.tolist(), computed_points)]
+else:
+    df['POINTS'] = computed_points
+
+# Ensure SHOT_MADE_FLAG is normalized to 0/1 for downstream code
+# If original SHOT_MADE_FLAG contained point-values, overwrite with 0/1
+if 'SHOT_MADE_FLAG' in df.columns:
+    try:
+        shot_flag_numeric = pd.to_numeric(df['SHOT_MADE_FLAG'], errors='coerce')
+        df['SHOT_MADE_FLAG'] = shot_flag_numeric.apply(lambda v: 1 if pd.notna(v) and int(v) in (1,2,3) and int(v) > 0 else (1 if str(v).strip().lower() in ('made','true','t','yes') else 0))
+    except Exception:
+        df['SHOT_MADE_FLAG'] = df['MADE_FLAG']
+else:
+    df['SHOT_MADE_FLAG'] = df['MADE_FLAG']
+
+# Recompute player aggregates using POINTS and normalized made flag
+player_stats = df.groupby('PLAYER_NAME').agg(
+    TOTAL_POINTS=('POINTS','sum'),
+    TOTAL_ATTEMPTS=('POINTS','count'),
+    MAKES=('MADE_FLAG','sum'),
+    THREE_PT_ATTEMPTS=('SHOT_TYPE', lambda s: s.astype(str).str.contains('3pt', case=False, na=False).sum())
+).reset_index()
+
+player_stats.rename(columns={'PLAYER_NAME':'PLAYER'}, inplace=True)
+player_stats['FG_PCT'] = player_stats['MAKES'] / player_stats['TOTAL_ATTEMPTS'] * 100
+player_stats['PTS_PER_SHOT'] = player_stats['TOTAL_POINTS'] / player_stats['TOTAL_ATTEMPTS']
+
+# Sort by total points
+top_scorers = player_stats.sort_values('TOTAL_POINTS', ascending=False).head(15)
+
+
+
+```
+
+## Top 10 Scorers
+
+```{python}
+#Top Yearly Scorers, will show how differet players have performed over the years
+
+import plotly.express as px
+from pathlib import Path
+outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir.mkdir(parents=True, exist_ok=True)
+# Top 10 scorers as an interactive Plotly bar chart
+top_10 = top_scorers.head(10)
+fig = px.bar(top_10, x='PLAYER', y='TOTAL_POINTS', text='TOTAL_POINTS',
+             title='Top 10 Scorers - 2019-2025 NBA',
+             labels={'PLAYER':'Player','TOTAL_POINTS':'Total Points'})
+fig.update_traces(textposition='outside')
+fig.update_layout(template='plotly_dark', xaxis_tickangle=-45, width=900, height=520, margin=dict(t=60,b=120))
+# save interactive HTML and show inline
+fig.write_html(str(outdir / 'top10_scorers.html'))
+fig.show()
+
+```
+
+## Scoring Efficiency vs Volume
+
+```{python}
+#Also an important graph, just need to add the year tag to it 
+
+import plotly.express as px
+from pathlib import Path
+outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir.mkdir(parents=True, exist_ok=True)
+# Scatter: Points per shot vs Total points, size by attempts
+top_15 = top_scorers.head(15)
+fig = px.scatter(top_15, x='PTS_PER_SHOT', y='TOTAL_POINTS', size='TOTAL_ATTEMPTS',
+                 hover_name='PLAYER', text='PLAYER',
+                 title='Scoring Efficiency vs Volume (Size = Shot Attempts)',
+                 labels={'PTS_PER_SHOT':'Points per Shot Attempt','TOTAL_POINTS':'Total Points','TOTAL_ATTEMPTS':'Total Attempts'})
+fig.update_traces(marker=dict(opacity=0.7), textposition='top center')
+fig.update_layout(template='plotly_dark', width=1000, height=560, margin=dict(t=70,b=80))
+# save interactive HTML and show inline
+fig.write_html(str(outdir / 'efficiency_vs_volume.html'))
+fig.show()
+```
+
+## Quarter-by-Quarter Scoring Distribution
+
+```{python}
+# Analyze scoring by period
+import matplotlib.pyplot as plt
+
+period_stats = df[df['SHOT_MADE_FLAG'] == 1].groupby(['PLAYER_NAME', 'PERIOD']).agg({
+    'POINTS': 'sum'
+}).unstack().fillna(0)
+
+# Top 5 players quarter breakdown
+top_5_players = top_scorers.head(5)['PLAYER'].tolist()
+top_period_stats = period_stats.loc[top_5_players]
+
+plt.figure(figsize=(12, 6))
+top_period_stats.plot(kind='bar', stacked=True)
+plt.xlabel('Player')
+plt.ylabel('Total Points')
+plt.title('Quarter-by-Quarter Scoring Distribution')
+plt.legend(title='Quarter', labels=['Q1', 'Q2', 'Q3', 'Q4', 'OT1', 'OT2', 'OT3'])
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+#| include: false
+#Add Year and Player Tag, Maybe a comparision as well, Maybe a team tag
+
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir.mkdir(parents=True, exist_ok=True)
+
+def court_shape_list():
+    # return a list of Plotly shape dicts approximating key court features
+    shapes = []
+    # hoop
+    shapes.append(dict(type='circle', xref='x', yref='y', x0=-7.5, x1=7.5, y0=-7.5, y1=7.5, line=dict(color='lightgrey', width=1.5)))
+    # backboard
+    shapes.append(dict(type='line', x0=-30, x1=30, y0=-7.5, y1=-7.5, line=dict(color='lightgrey', width=1)))
+    # paint rectangle
+    shapes.append(dict(type='rect', x0=-80, x1=80, y0=-47.5, y1=143, line=dict(color='lightgrey', width=1)))
+    # 3-pt side lines
+    shapes.append(dict(type='line', x0=-220, x1=-220, y0=-47.5, y1=92.5, line=dict(color='lightgrey', width=1)))
+    shapes.append(dict(type='line', x0=220, x1=220, y0=-47.5, y1=92.5, line=dict(color='lightgrey', width=1)))
+    # approximate 3-pt arc as a circle slice using a full circle for reference (visual only)
+    shapes.append(dict(type='circle', xref='x', yref='y', x0=-238, x1=238, y0=-238, y1=238, line=dict(color='lightgrey', width=0.8, dash='dot')))
+    return shapes
+
+def build_shot_chart(player):
+    player_shots = df[df['PLAYER_NAME'] == player]
+    if player_shots.empty:
+        print(f'No shots found for {player}; skipping')
+        return None
+    # map made flag to labels for discrete coloring
+    made_col = 'SHOT_MADE_FLAG' if 'SHOT_MADE_FLAG' in player_shots.columns else None
+    if made_col is not None:
+        player_shots = player_shots.copy()
+        player_shots['made_label'] = player_shots[made_col].map({1:'Made', 0:'Missed'}).fillna('Unknown')
+        color = 'made_label'
+        color_map = {'Made':'green','Missed':'red','Unknown':'gray'}
+    else:
+        color = None
+        color_map = None
+
+    fig = px.scatter(player_shots, x='LOC_X', y='LOC_Y', color=color,
+                     color_discrete_map=color_map if color_map else None,
+                     title=f'Shot Chart: {player} (Green=Made, Red=Missed)',
+                     labels={'LOC_X':'Court X Position','LOC_Y':'Court Y Position'},
+                     width=760, height=700)
+    fig.update_traces(marker=dict(size=6, opacity=0.7))
+    # add court shapes
+    for s in court_shape_list():
+        fig.add_shape(s)
+    fig.update_layout(template='plotly_dark', xaxis=dict(visible=False, range=[-250,250]), yaxis=dict(visible=False, range=[-50,500], scaleanchor='x'))
+    out_file = outdir / f"shot_chart_{player.replace(' ', '_')}.html"
+    fig.write_html(str(out_file))
+    return fig
+```
+
+## Shot Chart - LeBron James
+
+```{python}
+fig = build_shot_chart('LeBron James')
+if fig is not None:
+    fig.show()
+```
+
+
+
+```{python}
+#| include: false
+%pip install kaleido --quiet
+from pathlib import Path
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
+import numpy as np
+import re
+
+# Load df_clean.csv (tries current dir then project outputs)
+csv_path = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/df_clean.csv')
+if not csv_path.exists():
+    csv_path = Path('Project/df_clean.csv')
+if not csv_path.exists():
+    raise FileNotFoundError(f'df_clean.csv not found at {csv_path} or current directory')
+df_clean = pd.read_csv(csv_path)
+print('Loaded df_clean with rows:', len(df_clean))
+
+def ensure_xy(df):
+    """Ensure DataFrame has numeric 'x' and 'y' columns."""
+    df = df.copy()
+    if {'x','y'}.issubset(df.columns):
+        df['x'] = pd.to_numeric(df['x'], errors='coerce')
+        df['y'] = pd.to_numeric(df['y'], errors='coerce')
+        return df
+    alt_pairs = [('LOC_X','LOC_Y'), ('loc_x','loc_y'), ('locX','locY'), ('X','Y'), ('xCoord','yCoord'), ('shot_x','shot_y'), ('cx','cy')]
+    for a,b in alt_pairs:
+        if a in df.columns and b in df.columns:
+            df = df.rename(columns={a:'x', b:'y'})
+            df['x'] = pd.to_numeric(df['x'], errors='coerce')
+            df['y'] = pd.to_numeric(df['y'], errors='coerce')
+            return df
+    # try to parse text columns like '(12.3, -5.6)'
+    text_cols = [c for c in df.columns if df[c].dtype == object or str(df[c].dtype).startswith('string')]
+    coord_re = re.compile(r'(-?\d+\.?\d*)[^\d\-]+(-?\d+\.?\d*)')
+    for c in text_cols:
+        sample = df[c].dropna().astype(str).head(50).tolist()
+        if any(coord_re.search(s) for s in sample):
+            coords = df[c].astype(str).str.extract(coord_re)
+            if coords.shape[1] == 2:
+                df['x'] = pd.to_numeric(coords[0], errors='coerce')
+                df['y'] = pd.to_numeric(coords[1], errors='coerce')
+                if df['x'].notna().any() and df['y'].notna().any():
+                    return df
+    raise KeyError(f"No 'x'/'y' columns found and could not infer them. Available columns: {list(df.columns)}")
+
+def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, outdir=Path('./outputs')):
+    # ensure x/y and filter by player
+    try:
+        df2 = ensure_xy(df)
+    except KeyError as e:
+        print('Coordinate detection failed:', e)
+        return None
+    d = df2[df2.get('playerName','') == player].dropna(subset=['x','y']).copy()
+    if d.empty:
+        print(f'No shot rows with coordinates for {player}')
+        return None
+    # determine mid_x for consistent half selection and filter
+    mid_x = (df2['x'].min() + df2['x'].max()) / 2
+    if side.lower().startswith('r'):
+        d = d[d['x'] >= mid_x]
+    else:
+        d = d[d['x'] <= mid_x]
+    if d.empty:
+        print(f'No shots in {side} half for {player}')
+        return None
+    x = d['x'].values
+    y = d['y'].values
+    # build evaluation grid for density (same scale used to display)
+    xmin, xmax = x.min() - 5, x.max() + 5
+    ymin, ymax = y.min() - 5, y.max() + 5
+    xi = np.linspace(xmin, xmax, grid)
+    yi = np.linspace(ymin, ymax, grid)
+    xx, yy = np.meshgrid(xi, yi)
+    # compute KDE via gaussian_kde for smooth look (fallback to plotly if fails)
+    try:
+        from scipy.stats import gaussian_kde
+        kde = gaussian_kde(np.vstack([x, y]), bw_method=bw_method)
+        zz = kde(np.vstack([xx.ravel(), yy.ravel()]))
+        zz = zz.reshape(xx.shape)
+    except Exception as e:
+        print('KDE failed, falling back to plotly density_heatmap:', e)
+        fig = px.density_heatmap(d, x='x', y='y', nbinsx=80, nbinsy=80, color_continuous_scale='magma')
+        fig.update_layout(paper_bgcolor='black', plot_bgcolor='black', font_color='white')
+        fig.update_xaxes(visible=False)
+        fig.update_yaxes(visible=False)
+        return fig
+    # define approximate hoop location & radius to create rounded halfcourt shape
+    hoop_x = (xmin + xmax) / 2
+    hoop_y = ymin + (ymax - ymin) * 0.12
+    # radius controls rounded top; use the visible vertical span as baseline
+    radius = (ymax - hoop_y) * 0.95
+    # Mask grid points outside halfcourt shape: keep points on selected side AND either above hoop (y>hoop_y) OR within semicircle centered at hoop
+    if side.lower().startswith('r'):
+        side_mask = xx >= mid_x
+    else:
+        side_mask = xx <= mid_x
+    dist2 = (xx - hoop_x) ** 2 + (yy - hoop_y) ** 2
+    semicircle_mask = dist2 <= radius**2
+    top_mask = yy >= hoop_y
+    keep_mask = side_mask & (top_mask | semicircle_mask)
+    # set density to NaN outside mask so heatmap is transparent there
+    zz_masked = np.where(keep_mask, zz, np.nan)
+    # create heatmap using masked z (gives halfcourt shape)
+    fig = go.Figure(go.Heatmap(
+        x=xi,
+        y=yi,
+        z=zz_masked,
+        colorscale='magma',
+        zsmooth='best',
+        showlegend=True
+        
+    ))
+    # use dark background + magma colorscale
+    fig.update_layout(paper_bgcolor='black', plot_bgcolor='black', font_color='white',
+                      title=f'{player} - halfcourt ({side})', width=700, height=700,
+                      margin=dict(t=80, l=40, r=40, b=40))
+    fig.update_xaxes(visible=False, range=[xmin, xmax])
+    fig.update_yaxes(visible=False, scaleanchor='x', scaleratio=1, range=[ymin, ymax])
+    # optional subtle court overlays (baseline and hoop circle)
+    line_color = 'rgba(200,200,200,0.5)'
+    shapes = [
+        dict(type='line', x0=xmin, x1=xmax, y0=ymin, y1=ymin, line=dict(color=line_color, width=2)),
+        dict(type='circle', xref='x', yref='y', x0=hoop_x-7, x1=hoop_x+7, y0=hoop_y-7, y1=hoop_y+7, line=dict(color=line_color, width=1.5))
+    ]
+    fig.update_layout(shapes=shapes)
+    # create output dir and save
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    html_path = outdir / f'{player}_halfcourt_heatmap.html'
+    png_path = outdir / f'{player}_halfcourt_heatmap.png'
+    fig.write_html(str(html_path))
+    # explicit kaleido PNG export
+    try:
+        fig.write_image(str(png_path), engine='kaleido', format='png', scale=2)
+        print('Saved PNG:', png_path)
+    except Exception as e:
+        print('PNG export failed. Ensure kaleido is installed and available in the environment.')
+        print('Error details:', e)
+    print('Saved HTML:', html_path)
+    return fig
+
+# Generate heatmaps for selected players in separate slide chunks
+outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+```
+
+
+
+```{python}
+#| include: false
+# Example visuals for presentation (interactive plotly + saved HTML)
+from pathlib import Path
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+
+# # ensure df is available (use notebook df_clean if present)
+try:
+    df = df_clean
+except NameError:
+    csv_path = Path('Project/data_kaggle/nbadata/df_clean.csv')
+    if not csv_path.exists():
+        raise FileNotFoundError('df_clean not in notebook and csv not found at ' + str(csv_path))
+    df = pd.read_csv(csv_path)
+
+outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir.mkdir(parents=True, exist_ok=True)
+
+# sample player used for yearly trend slide
+sample_player = 'Doncic' if 'Doncic' in df['playerName'].unique() else df['playerName'].mode().iat[0]
+```
+
+## Top Players by Shot Events
+
+```{python}
+top = df['playerName'].value_counts().nlargest(12).reset_index()
+top.columns = ['player','shots']
+fig_top = px.bar(top, x='shots', y='player', orientation='h', title='Top players by shot events', text='shots')
+fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, template='plotly_dark')
+fig_top.show()
+fig_top.write_html(str(outdir/'top_players.html'))
+```
+
+## Shot Distance Distribution
+
+```{python}
+if 'shotDistance' in df.columns:
+    fig_dist = px.histogram(df.dropna(subset=['shotDistance']), x='shotDistance', nbins=40, title='Shot distance distribution', marginal='box')
+    fig_dist.update_layout(template='plotly_white')
+    fig_dist.show()
+    fig_dist.write_html(str(outdir/'shot_distance.html'))
+
+```
+
+## Yearly Trend
+
+```{python}
+if 'YEAR' in df.columns and 'shotResult' in df.columns:
+    dply = df[df['playerName']==sample_player].dropna(subset=['shotResult'])
+    yearly = dply.groupby('YEAR').agg(shots=('shotResult','count'), made=('shotResult', lambda s: (s=='Made').sum())).reset_index()
+    if not yearly.empty:
+        yearly['FG%'] = yearly['made']/yearly['shots']
+        fig_year = go.Figure()
+        fig_year.add_trace(go.Bar(x=yearly['YEAR'], y=yearly['shots'], name='Points'))
+        fig_year.add_trace(go.Scatter(x=yearly['YEAR'], y=yearly['FG%'], name='FG%', yaxis='y2', mode='lines+markers'))
+        fig_year.update_layout(title=f'{sample_player} - Points and FG% per YEAR', template='plotly_dark', yaxis=dict(title='Points'), yaxis2=dict(title='FG%', overlaying='y', side='right', tickformat='.0%'))
+        fig_year.show()
+        fig_year.write_html(str(outdir/f'{sample_player}_yearly.html'))
+
+
+```
+
+```{python}
+#| include: false
+
+# # 3) Overall shot density (halfcourt-shaped) ﷿﷿﷿﷿﷿﷿﷿﷿﷿ quick density_heatmap clipped to half (right side)
+# def quick_half_heatmap_plot(df, player=None, side='right', nbins=80, title=None):
+#     d = df.dropna(subset=['x','y']) if player is None else df[(df['playerName']==player)].dropna(subset=['x','y'])
+#     if d.empty:
+#         print('No data for', player); return None
+#     mid_x = (df['x'].min()+df['x'].max())/2
+#     if side.lower().startswith('r'): d = d[d['x']>=mid_x]
+#     else: d = d[d['x']<=mid_x]
+#     fig = px.density_heatmap(d, x='x', y='y', nbinsx=nbins, nbinsy=nbins, color_continuous_scale='magma')
+#     fig.update_layout(template='plotly_dark', title=title or f'{player or "ALL"} halfcourt ({side})', xaxis={'visible':False}, yaxis={'visible':False}, width=640, height=680)
+#     return fig
+
+# for p in ['Curry','Young']:
+#     fig_h = quick_half_heatmap_plot(df, player=p, side='right', nbins=100, title=f'{p} - halfcourt density')
+#     if fig_h is not None:
+#         fig_h.show()
+#         fig_h.write_html(str(outdir/f'{p}_halfcourt_density.html'))
+
+# 5) Example zone table (area or shot zone) ﷿﷿﷿﷿﷿﷿﷿﷿﷿ counts + FG% for top zones for Curry
+player = sample_player
+if 'playerName' in df.columns:
+    dply = df[df['playerName']==player].copy()
+    if 'shotResult' in dply.columns and ('area' in dply.columns or 'SHOT_ZONE_AREA' in dply.columns):
+        zone_col = 'area' if 'area' in dply.columns else 'SHOT_ZONE_AREA'
+        z = dply.groupby(zone_col).agg(FGA=('shotResult','count'), made=('shotResult', lambda s: (s=='Made').sum())).reset_index()
+        z['FG%'] = z['made']/z['FGA']
+        z = z.sort_values('FGA', ascending=False).head(12)
+        print(f'Zone summary for {player}:')
+        display(z)
+    else:
+        print('Required columns (shotResult and area/SHOT_ZONE_AREA) missing; skipping zone table')
+
+```
+
+```{python}
+#| include: false
+import pandas as pd
+import glob
+
+# Match both patterns
+files = glob.glob("/Users/ankithnagabandi/Documents/Fall25/5520/Project/data_kaggle/nbadata/shotdetail_*.csv") + glob.glob("/Users/ankithnagabandi/Documents/Fall25/5520/Project/data_kaggle/nbadata/shotdetail_po_*.csv")
+
+dfs = []
+for f in files:
+    dfs.append(pd.read_csv(f))
+
+combined = pd.concat(dfs, ignore_index=True)
+combined.to_csv("combined_shotdetails.csv", index=False)
+
+print("Saved combined_shotdetails.csv")
+```
+
