@@ -1,4 +1,4 @@
-# Football-Analytics-CSAS-2026
+# Basketball-Analytics-CSAS-2026
 
 Date: April 10, 2026
 
