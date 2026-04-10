@@ -11,8 +11,7 @@ Workshop Leader: [Ankith Nagabandi](https://www.linkedin.com/in/ankithn/)
 [Conference Website](https://statds.org/events/csas2026/)
 
 ## Overview
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)]
-(https://colab.research.google.com/github/ankithn30/Basketball-Analytics=CSAS/basketball_csas.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ankithn30/Basketball-Analytics-CSAS/blob/main/code/basketball_csas.ipynb)
 
 This workshop looks to provide a look at NBA analysis using Python.
 
