@@ -19,24 +19,24 @@ execute:
 jupyter: python3
 ---
 
-## About Me
-
-### Ankith Nagabandi
-- Passionate about Basketball Analytics.
-- Developing interactive dashboards and visualizations for shot analysis.
-- Exploring data-driven insights in NBA statistics.
-
 ## Presentation Goals & Expectations
 
 ### Goals
 - Analyze NBA shot performance across different zones and players.
 - Visualize shooting trends and efficiency.
-- Provide actionable insights for coaches and analysts.
 
 ### What to Expect
 - Data preprocessing and cleaning techniques.
 - Interactive visualizations of shot locations and efficiency metrics.
 - Summary of key findings and potential future work.
+
+
+## Key Statistical Questions
+
+1. How has the average shot distance changed over the years (2019-2025)?
+2. Which players have the highest 3-point percentage among those with at least 500 attempts?
+
+
 
 ```{python}
 #| include: false
@@ -46,8 +46,9 @@ from pathlib import Path
 
 # Try multiple likely locations for the CSV and provide a helpful error if not found
 candidates = [
-    Path('/Users/ankithnagabandi/Documents/Fall25/5520/New_Project/Project/nba_data.csv'),
-
+    Path('data/nba_data.csv'),
+    Path('../data/nba_data.csv'),
+    Path('nba_data.csv'),
 ]
 
 data_path = None
