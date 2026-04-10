@@ -25,9 +25,27 @@ jupyter: python3
 - Analyze NBA shot performance across different zones and players.
 - Visualize shooting trends and efficiency.
 
+## The Evolution of Basketball Analytics
+
+- Traditionally, basketball was evaluated through basic statistics like points, rebounds, and assists.
+- Modern analytics emphasize efficiency, shot selection, and spatial data.
+- Teams now leverage data-driven insights for roster construction, game strategy, and player development.
+
+## Why Shot Analysis Matters
+
+- Identifying high-value shooting zones on the court increases efficiency.
+- Analyzing shot selection helps coaches optimize offensive strategies.
+- Efficiency metrics directly correlate with points per possession and game outcomes.
+
+## About the Dataset
+
+- The dataset contains detailed NBA shot information
+- Key attributes tracked include player names, shot distances, shot results (made/missed), game periods, and seasonal data.
+- This data serves as the foundation for exploring offensive trends and player performance over time.
+
 ## Key Statistical Questions
 
-1. How has the average shot distance changed over the years (2019-2025)?
+1. How has the average shot distance changed over the years?
 2. Which players have the highest 3-point percentage among those with at least 500 attempts?
 
 
@@ -40,7 +58,11 @@ from pathlib import Path
 
 # Try multiple likely locations for the CSV and provide a helpful error if not found
 candidates = [
-    Path('../data/nba_data.csv')
+    Path('nba_data.csv'),
+    Path('./nba_data.csv'),
+    Path('./code/nba_data.csv'),
+    Path('../code/nba_data.csv'),
+    Path('../data/nba_data.csv'),
 ]
 
 data_path = None
@@ -183,7 +205,7 @@ top_scorers = player_stats.sort_values('TOTAL_POINTS', ascending=False).head(15)
 
 import plotly.express as px
 from pathlib import Path
-outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir = Path('../outputs')
 outdir.mkdir(parents=True, exist_ok=True)
 # Top 10 scorers as an interactive Plotly bar chart
 top_10 = top_scorers.head(10)
@@ -205,7 +227,7 @@ fig.show()
 
 import plotly.express as px
 from pathlib import Path
-outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir = Path('../outputs')
 outdir.mkdir(parents=True, exist_ok=True)
 # Scatter: Points per shot vs Total points, size by attempts
 top_15 = top_scorers.head(15)
@@ -251,7 +273,7 @@ plt.show()
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
-outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir = Path('../outputs')
 outdir.mkdir(parents=True, exist_ok=True)
 
 def court_shape_list():
@@ -456,35 +478,12 @@ def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, o
     return fig
 
 # Generate heatmaps for selected players in separate slide chunks
-outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
+outdir = Path('../outputs')
 ```
 
 
 
-```{python}
-#| include: false
-# Example visuals for presentation (interactive plotly + saved HTML)
-from pathlib import Path
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import numpy as np
 
-# # ensure df is available (use notebook df_clean if present)
-try:
-    df = df_clean
-except NameError:
-    csv_path = Path('Project/data_kaggle/nbadata/df_clean.csv')
-    if not csv_path.exists():
-        raise FileNotFoundError('df_clean not in notebook and csv not found at ' + str(csv_path))
-    df = pd.read_csv(csv_path)
-
-outdir = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/outputs')
-outdir.mkdir(parents=True, exist_ok=True)
-
-# sample player used for yearly trend slide
-sample_player = 'Doncic' if 'Doncic' in df['playerName'].unique() else df['playerName'].mode().iat[0]
-```
 
 ## Top Players by Shot Events
 
@@ -561,23 +560,5 @@ if 'playerName' in df.columns:
     else:
         print('Required columns (shotResult and area/SHOT_ZONE_AREA) missing; skipping zone table')
 
-```
-
-```{python}
-#| include: false
-import pandas as pd
-import glob
-
-# Match both patterns
-files = glob.glob("/Users/ankithnagabandi/Documents/Fall25/5520/Project/data_kaggle/nbadata/shotdetail_*.csv") + glob.glob("/Users/ankithnagabandi/Documents/Fall25/5520/Project/data_kaggle/nbadata/shotdetail_po_*.csv")
-
-dfs = []
-for f in files:
-    dfs.append(pd.read_csv(f))
-
-combined = pd.concat(dfs, ignore_index=True)
-combined.to_csv("combined_shotdetails.csv", index=False)
-
-print("Saved combined_shotdetails.csv")
 ```
 
