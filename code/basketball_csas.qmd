@@ -46,7 +46,7 @@ jupyter: python3
 ## Key Statistical Questions
 
 1. How has the average shot distance changed over the years?
-2. Which players have the highest 3-point percentage among those with at least 500 attempts?
+2. How does league-wide FG% vary by quarter?
 
 
 
@@ -58,10 +58,6 @@ from pathlib import Path
 
 # Try multiple likely locations for the CSV and provide a helpful error if not found
 candidates = [
-    Path('nba_data.csv'),
-    Path('./nba_data.csv'),
-    Path('./code/nba_data.csv'),
-    Path('../code/nba_data.csv'),
     Path('../data/nba_data.csv'),
 ]
 
@@ -223,7 +219,7 @@ fig.show()
 ## Scoring Efficiency vs Volume
 
 ```{python}
-#Also an important graph, just need to add the year tag to it 
+#Also an important graph, just need to add the year tag to it
 
 import plotly.express as px
 from pathlib import Path
@@ -254,7 +250,8 @@ period_stats = df[df['SHOT_MADE_FLAG'] == 1].groupby(['PLAYER_NAME', 'PERIOD']).
 
 # Top 5 players quarter breakdown
 top_5_players = top_scorers.head(5)['PLAYER'].tolist()
-top_period_stats = period_stats.loc[top_5_players]
+# period_stats is indexed by PLAYER_NAME; filter to matching players
+top_period_stats = period_stats.loc[period_stats.index.isin(top_5_players)]
 
 plt.figure(figsize=(12, 6))
 top_period_stats.plot(kind='bar', stacked=True)
@@ -335,7 +332,8 @@ if fig is not None:
 
 ```{python}
 #| include: false
-%pip install kaleido --quiet
+import subprocess, sys
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'kaleido', '-q'])
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -343,15 +341,6 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import numpy as np
 import re
-
-# Load df_clean.csv (tries current dir then project outputs)
-csv_path = Path('/Users/ankithnagabandi/Documents/Fall25/5520/Project/df_clean.csv')
-if not csv_path.exists():
-    csv_path = Path('Project/df_clean.csv')
-if not csv_path.exists():
-    raise FileNotFoundError(f'df_clean.csv not found at {csv_path} or current directory')
-df_clean = pd.read_csv(csv_path)
-print('Loaded df_clean with rows:', len(df_clean))
 
 def ensure_xy(df):
     """Ensure DataFrame has numeric 'x' and 'y' columns."""
@@ -381,14 +370,16 @@ def ensure_xy(df):
                     return df
     raise KeyError(f"No 'x'/'y' columns found and could not infer them. Available columns: {list(df.columns)}")
 
-def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, outdir=Path('./outputs')):
+def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, out_path=Path('./outputs')):
     # ensure x/y and filter by player
     try:
         df2 = ensure_xy(df)
     except KeyError as e:
         print('Coordinate detection failed:', e)
         return None
-    d = df2[df2.get('playerName','') == player].dropna(subset=['x','y']).copy()
+    # Support both 'playerName' and 'PLAYER_NAME' column names
+    name_col = 'playerName' if 'playerName' in df2.columns else 'PLAYER_NAME'
+    d = df2[df2[name_col] == player].dropna(subset=['x','y']).copy()
     if d.empty:
         print(f'No shot rows with coordinates for {player}')
         return None
@@ -446,7 +437,7 @@ def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, o
         colorscale='magma',
         zsmooth='best',
         showlegend=True
-        
+
     ))
     # use dark background + magma colorscale
     fig.update_layout(paper_bgcolor='black', plot_bgcolor='black', font_color='white',
@@ -462,10 +453,10 @@ def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, o
     ]
     fig.update_layout(shapes=shapes)
     # create output dir and save
-    outdir = Path(outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    html_path = outdir / f'{player}_halfcourt_heatmap.html'
-    png_path = outdir / f'{player}_halfcourt_heatmap.png'
+    out_path = Path(out_path)
+    out_path.mkdir(parents=True, exist_ok=True)
+    html_path = out_path / f'{player}_halfcourt_heatmap.html'
+    png_path = out_path / f'{player}_halfcourt_heatmap.png'
     fig.write_html(str(html_path))
     # explicit kaleido PNG export
     try:
@@ -481,26 +472,12 @@ def plot_and_save_halfcourt(df, player, side='right', grid=220, bw_method=0.3, o
 outdir = Path('../outputs')
 ```
 
-
-
-
-
-## Top Players by Shot Events
-
-```{python}
-top = df['playerName'].value_counts().nlargest(12).reset_index()
-top.columns = ['player','shots']
-fig_top = px.bar(top, x='shots', y='player', orientation='h', title='Top players by shot events', text='shots')
-fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, template='plotly_dark')
-fig_top.show()
-fig_top.write_html(str(outdir/'top_players.html'))
-```
-
 ## Shot Distance Distribution
 
 ```{python}
-if 'shotDistance' in df.columns:
-    fig_dist = px.histogram(df.dropna(subset=['shotDistance']), x='shotDistance', nbins=40, title='Shot distance distribution', marginal='box')
+dist_col = 'shotDistance' if 'shotDistance' in df.columns else ('SHOT_DISTANCE' if 'SHOT_DISTANCE' in df.columns else None)
+if dist_col is not None:
+    fig_dist = px.histogram(df.dropna(subset=[dist_col]), x=dist_col, nbins=40, title='Shot Distance Distribution', marginal='box')
     fig_dist.update_layout(template='plotly_white')
     fig_dist.show()
     fig_dist.write_html(str(outdir/'shot_distance.html'))
@@ -510,15 +487,21 @@ if 'shotDistance' in df.columns:
 ## Yearly Trend
 
 ```{python}
-if 'YEAR' in df.columns and 'shotResult' in df.columns:
-    dply = df[df['playerName']==sample_player].dropna(subset=['shotResult'])
-    yearly = dply.groupby('YEAR').agg(shots=('shotResult','count'), made=('shotResult', lambda s: (s=='Made').sum())).reset_index()
+sample_player = top_scorers.iloc[0]['PLAYER']
+name_col = 'playerName' if 'playerName' in df.columns else 'PLAYER_NAME'
+result_col = 'shotResult' if 'shotResult' in df.columns else ('SHOT_MADE_FLAG' if 'SHOT_MADE_FLAG' in df.columns else None)
+if 'YEAR' in df.columns and result_col is not None:
+    dply = df[df[name_col]==sample_player].dropna(subset=[result_col])
+    if result_col == 'SHOT_MADE_FLAG':
+        yearly = dply.groupby('YEAR').agg(shots=(result_col,'count'), made=(result_col,'sum')).reset_index()
+    else:
+        yearly = dply.groupby('YEAR').agg(shots=(result_col,'count'), made=(result_col, lambda s: (s=='Made').sum())).reset_index()
     if not yearly.empty:
         yearly['FG%'] = yearly['made']/yearly['shots']
         fig_year = go.Figure()
-        fig_year.add_trace(go.Bar(x=yearly['YEAR'], y=yearly['shots'], name='Points'))
+        fig_year.add_trace(go.Bar(x=yearly['YEAR'], y=yearly['shots'], name='Shots'))
         fig_year.add_trace(go.Scatter(x=yearly['YEAR'], y=yearly['FG%'], name='FG%', yaxis='y2', mode='lines+markers'))
-        fig_year.update_layout(title=f'{sample_player} - Points and FG% per YEAR', template='plotly_dark', yaxis=dict(title='Points'), yaxis2=dict(title='FG%', overlaying='y', side='right', tickformat='.0%'))
+        fig_year.update_layout(title=f'{sample_player} - Shots and FG% per Year', template='plotly_dark', yaxis=dict(title='Shots'), yaxis2=dict(title='FG%', overlaying='y', side='right', tickformat='.0%'))
         fig_year.show()
         fig_year.write_html(str(outdir/f'{sample_player}_yearly.html'))
 
