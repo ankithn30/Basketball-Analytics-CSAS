@@ -46,9 +46,7 @@ from pathlib import Path
 
 # Try multiple likely locations for the CSV and provide a helpful error if not found
 candidates = [
-    Path('data/nba_data.csv'),
     Path('../data/nba_data.csv'),
-    Path('nba_data.csv'),
 ]
 
 data_path = None
