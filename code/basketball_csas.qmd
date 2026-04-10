@@ -10,7 +10,7 @@ format:
     self-contained: true
     code-fold: true
     scrollable: true
-    footer: "NBA Shot Analysis · Ankith Nagabandi"
+    footer: "NBA Shot Analysis · Ankith Nagabandi · CSAS 2026 "
     logo: ""
 execute:
   echo: false
@@ -24,12 +24,6 @@ jupyter: python3
 ### Goals
 - Analyze NBA shot performance across different zones and players.
 - Visualize shooting trends and efficiency.
-
-### What to Expect
-- Data preprocessing and cleaning techniques.
-- Interactive visualizations of shot locations and efficiency metrics.
-- Summary of key findings and potential future work.
-
 
 ## Key Statistical Questions
 
